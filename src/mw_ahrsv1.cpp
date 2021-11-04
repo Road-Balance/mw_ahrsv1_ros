@@ -31,7 +31,7 @@ private:
   IMUMsg imu_raw_data;
 
   // Data buffer
-  char buffer[50];
+  char buffer[120];
   char small_buffer[10];
 
   unsigned char angle_cmd[5] = {0x61, 0x6E, 0x67, 0x0D, 0x0A}; // ang Enter
@@ -107,7 +107,7 @@ public:
     buffer[sizeof(buffer)] = '\0';
   }
 
-  void get_angle_data(IMUMsg &raw_data) {
+  void get_angle_data(IMUMsg &msg_in) {
     write(dev, angle_cmd, 5);
     read(dev, &buffer, sizeof(buffer));
 
@@ -122,94 +122,108 @@ public:
         ptr = strtok(NULL, " ");
 
         if (ang_count == 1) {
-          raw_data.roll = atof(ptr);
+          msg_in.roll = atof(ptr);
         } else if (ang_count == 2) {
-          raw_data.pitch = atof(ptr);
+          msg_in.pitch = atof(ptr);
         } else if (ang_count == 3) {
-          raw_data.yaw = atof(ptr);
+          msg_in.yaw = atof(ptr);
         }
       }
     }
   }
 
-  void get_acc_data(IMUMsg &raw_data) {
-    write(dev, acc_cmd, 5);
+  void parse_ss_data(IMUMsg &msg_in) {
     read(dev, &buffer, sizeof(buffer));
 
-    if (buffer[0] == 'a' && buffer[1] == 'c' && buffer[2] == 'c') {
-      printf("test \n");
-      char *ptr = strtok(buffer, " ");
+    if (int(buffer[0]) < 97) {
+      // std::cout << buffer << std::endl;
+      char *rest;
+      char *token;
+      char *ptr = buffer;
 
       ang_count = 0;
 
-      while (ptr != NULL) {
+      while (token = strtok_r(ptr, " ", &rest)) {
         ang_count++;
 
-        ptr = strtok(NULL, " ");
-
         if (ang_count == 1) {
-          raw_data.linear_acc_x = atof(ptr);
+          msg_in.linear_acc_x = atof(token);
         } else if (ang_count == 2) {
-          raw_data.linear_acc_y = atof(ptr);
+          msg_in.linear_acc_y = atof(token);
         } else if (ang_count == 3) {
-          raw_data.linear_acc_z = atof(ptr);
+          msg_in.linear_acc_z = atof(token);
+        } else if (ang_count == 4) {
+          msg_in.angular_vel_x = atof(token);
+        } else if (ang_count == 5) {
+          msg_in.angular_vel_y = atof(token);
+        } else if (ang_count == 6) {
+          msg_in.angular_vel_z = atof(token);
+        } else if (ang_count == 7) {
+          msg_in.roll = atof(token);
+        } else if (ang_count == 8) {
+          msg_in.pitch = atof(token);
+        } else if (ang_count == 9) {
+          msg_in.yaw = atof(token);
         }
+        ptr = rest;
       }
+
+      // printf("%0.3f %0.3f %0.3f ", msg_in.linear_acc_x, msg_in.linear_acc_y,
+      //        msg_in.linear_acc_z);
+      // printf("%0.3f %0.3f %0.3f ", msg_in.angular_vel_x,
+      // msg_in.angular_vel_y,
+      //        msg_in.angular_vel_z);
+      // printf("%0.3f %0.3f %0.3f \n \n", msg_in.roll, msg_in.pitch,
+      // msg_in.yaw);
     }
   }
 
-  void get_gyr_data(IMUMsg &raw_data) {
-    write(dev, gyr_cmd, 5);
-    read(dev, &buffer, sizeof(buffer));
+  void pub_msg() {
 
-    if (buffer[0] == 'g' && buffer[1] == 'y' && buffer[2] == 'r') {
-      char *ptr = strtok(buffer, " ");
+    static double convertor_g2a =
+        9.80665; // for linear_acceleration (g to m/s^2)
+    static double convertor_d2r =
+        M_PI / 180.0; // for angular_velocity (degree to radian)
+    static double convertor_r2d =
+        180.0 / M_PI; // for easy understanding (radian to degree)
+    static double convertor_ut2t = 1000000; // for magnetic_field (uT to Tesla)
+    static double convertor_c = 1.0;        // for temperature (celsius)
 
-      ang_count = 0;
+    parse_ss_data(imu_raw_data);
 
-      while (ptr != NULL) {
-        ang_count++;
+    tf::Quaternion orientation = tf::createQuaternionFromRPY(
+        imu_raw_data.roll, imu_raw_data.pitch, imu_raw_data.yaw);
 
-        ptr = strtok(NULL, " ");
+    ros::Time now = ros::Time::now();
 
-        if (ang_count == 1) {
-          raw_data.angular_vel_x = atof(ptr);
-        } else if (ang_count == 2) {
-          raw_data.angular_vel_y = atof(ptr);
-        } else if (ang_count == 3) {
-          raw_data.angular_vel_z = atof(ptr);
-        }
-      }
-    }
+    m_imu_msg.header.stamp = now;
+
+    m_imu_msg.header.frame_id = "imu_link";
+
+    // orientation
+    m_imu_msg.orientation.x = orientation[0];
+    m_imu_msg.orientation.y = orientation[1];
+    m_imu_msg.orientation.z = orientation[2];
+    m_imu_msg.orientation.w = orientation[3];
+
+    // original data used the g unit, convert to m/s^2
+    m_imu_msg.linear_acceleration.x = imu.ax * convertor_g2a;
+    m_imu_msg.linear_acceleration.y = -imu.ay * convertor_g2a;
+    m_imu_msg.linear_acceleration.z = -imu.az * convertor_g2a;
+
+    // original data used the degree/s unit, convert to radian/s
+    m_imu_msg.angular_velocity.x = imu.gx * convertor_d2r;
+    m_imu_msg.angular_velocity.y = -imu.gy * convertor_d2r;
+    m_imu_msg.angular_velocity.z = -imu.gz * convertor_d2r;
+
+    std::cout << "x = " << m_imu_msg.orientation.x << std::endl;
+    std::cout << "roll = " << imu_raw_data.roll << std::endl;
+    std::cout << "pitch = " << imu_raw_data.pitch << std::endl;
+    std::cout << "yaw = " << imu_raw_data.yaw << std::endl;
+    std::cout << std::endl;
+
+    m_imu_publisher.publish(m_imu_msg);
   }
-
-  // void pub_msg() {
-  //   get_angle_data(imu_raw_data);
-  //   get_acc_data(imu_raw_data);
-  //   get_gyr_data(imu_raw_data);
-
-  //   tf::Quaternion orientation = tf::createQuaternionFromRPY(
-  //       imu_raw_data.roll, imu_raw_data.pitch, imu_raw_data.yaw);
-
-  //   ros::Time now = ros::Time::now();
-
-  //   m_imu_msg.header.stamp = now;
-
-  //   m_imu_msg.header.frame_id = "imu_link";
-  //   // orientation
-  //   m_imu_msg.orientation.x = orientation[0];
-  //   m_imu_msg.orientation.y = orientation[1];
-  //   m_imu_msg.orientation.z = orientation[2];
-  //   m_imu_msg.orientation.w = orientation[3];
-
-  //   std::cout << "x = " << m_imu_msg.orientation.x << std::endl;
-  //   std::cout << "roll = " << imu_raw_data.roll << std::endl;
-  //   std::cout << "pitch = " << imu_raw_data.pitch << std::endl;
-  //   std::cout << "yaw = " << imu_raw_data.yaw << std::endl;
-  //   std::cout << std::endl;
-
-  //   m_imu_publisher.publish(m_imu_msg);
-  // }
 };
 
 int main(int argc, char **argv) {
@@ -219,20 +233,16 @@ int main(int argc, char **argv) {
   ros::Rate rate(100);
 
   ahrs_obj.reset_imu();
-  // ahrs_obj.speed_setup();
+  ahrs_obj.speed_setup();
   ahrs_obj.start_data_stream();
 
+  // ros::Duration(1.5).sleep();
   IMUMsg test_imu_raw_data;
 
   while (ros::ok()) {
 
-    ahrs_obj.get_angle_data(test_imu_raw_data);
-    ahrs_obj.get_acc_data(test_imu_raw_data);
-
-    printf("%f, %f, %f \n", test_imu_raw_data.roll, test_imu_raw_data.pitch,
-           test_imu_raw_data.yaw);
-    printf("%f, %f, %f \n", test_imu_raw_data.linear_acc_x,
-           test_imu_raw_data.linear_acc_y, test_imu_raw_data.linear_acc_z);
+    // ahrs_obj.parse_ss_data(test_imu_raw_data);
+    ahrs_obj.pub_msg();
 
     rate.sleep();
   }
