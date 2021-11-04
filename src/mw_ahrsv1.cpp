@@ -5,12 +5,19 @@
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_datatypes.h>
 typedef struct {
-  // Euler
   float roll;
   float pitch;
   float yaw;
 
-} Euler;
+  float linear_acc_x;
+  float linear_acc_y;
+  float linear_acc_z;
+
+  float angular_vel_x;
+  float angular_vel_y;
+  float angular_vel_z;
+
+} IMUMsg;
 
 class MW_AHRS {
 
@@ -18,11 +25,20 @@ private:
   // Device Name
   int dev = 0;
 
-  Euler euler;
+  IMUMsg imu_raw_data;
 
   // Data buffer
   char buffer[100];
-  unsigned char Tx[5];
+  char small_buffer[10];
+
+  unsigned char angle_cmd[5] = {0x61, 0x6E, 0x67, 0x0D, 0x0A}; // ang Enter
+  unsigned char reset_cmd[5] = {0x7A, 0x72, 0x6F, 0x0D, 0x0A}; // zro Enter
+  unsigned char av_cmd[7] = {0x61, 0x76, 0x3D, 0x31,
+                             0x30, 0x0D, 0x0A}; // av = 10
+  unsigned char speed_cmd[7] = {0x73, 0x70, 0x3D, 0x31,
+                                0x30, 0x0D, 0x0A}; // sp=10 Enter
+  unsigned char ros_data_cmd[6] = {0x73, 0x73, 0x3D,
+                                   0x37, 0x0D, 0x0A}; // ss=7 Enter
 
   // Serperate Euler Angle Variable
   int ang_count = 0;
@@ -48,50 +64,108 @@ public:
     // int open_serial(char *dev_name, int baud, int vtime, int vmin);
     dev = open_serial((char *)"/dev/ttyUSB0", 115200, 0, 0);
 
-    Tx[0] = A;  // a
-    Tx[1] = N;  // n
-    Tx[2] = G;  // g
-    Tx[3] = CR; // CR
-    Tx[4] = LF; // LF
-
     m_imu_publisher = m_nh.advertise<sensor_msgs::Imu>("imu/data", 5);
-
-    // ros::Time::init();
   }
   ~MW_AHRS() { close_serial(dev); }
 
-  Euler get_data(void) {
-    write(dev, Tx, 5);
+  void reset_imu() {
+    write(dev, reset_cmd, 5);
+    read(dev, &buffer, sizeof(buffer));
+
+    buffer[sizeof(buffer)] = '\0';
+
+    if (buffer[0] == 'z' && buffer[1] == 'r' && buffer[2] == 'o') {
+      printf("IMU Reset\n");
+    }
+  }
+
+  void speed_setup() {
+    write(dev, speed_cmd, 7);
+    read(dev, &buffer, sizeof(buffer));
+
+    buffer[sizeof(buffer)] = '\0';
+
+    if (buffer[0] == 's' && buffer[1] == 'p' && buffer[2] == '=' &&
+        buffer[3] == '1' && buffer[4] == '0') {
+      printf("Serial Speed Reset\n");
+    }
+  }
+
+  void start_data_stream() {
+    write(dev, ros_data_cmd, 6);
+    read(dev, &buffer, sizeof(buffer));
+
+    buffer[sizeof(buffer)] = '\0';
+  }
+
+  IMUMsg get_angle_data(void) {
     read(dev, &buffer, 100);
 
-    if (buffer[0] == 'a' && buffer[1] == 'n' && buffer[2] == 'g') {
-      char *ptr = strtok(buffer, " ");
+    buffer[sizeof(buffer)] = '\0';
+    std::cout << buffer << std::endl;
 
-      ang_count = 0;
+    IMUMsg raw_data;
 
-      while (ptr != NULL) {
-        ang_count++;
+    char *ptr = strtok(buffer, " ");
+    std::cout << "First Data : " << atof(ptr) << std::endl;
 
-        ptr = strtok(NULL, " ");
+    // if (buffer[0] == 's' && buffer[1] == 's' && buffer[2] == '=') {
+    //   char *ptr = strtok(buffer, " ");
 
-        if (ang_count == 1) {
-          euler.roll = atof(ptr);
-        } else if (ang_count == 2) {
-          euler.pitch = atof(ptr);
-        } else if (ang_count == 3) {
-          euler.yaw = atof(ptr);
-        }
-      }
-    }
+    //   ang_count = 0;
 
-    return euler;
+    //   while (ptr != NULL) {
+    //     ang_count++;
+
+    //     ptr = strtok(NULL, " ");
+
+    //     switch (ang_count) {
+    //     case 1:
+    //       raw_data.linear_acc_x = atof(ptr);
+    //       break;
+    //     case 2:
+    //       raw_data.linear_acc_y = atof(ptr);
+    //       break;
+    //     case 3:
+    //       raw_data.linear_acc_z = atof(ptr);
+    //       break;
+    //     case 4:
+    //       raw_data.angular_vel_x = atof(ptr);
+    //       break;
+    //     case 5:
+    //       raw_data.angular_vel_x = atof(ptr);
+    //       break;
+    //     case 6:
+    //       raw_data.angular_vel_x = atof(ptr);
+    //       break;
+    //     case 7:
+    //       raw_data.roll = atof(ptr);
+    //       break;
+    //     case 8:
+    //       raw_data.pitch = atof(ptr);
+    //       break;
+    //     case 9:
+    //       raw_data.yaw = atof(ptr);
+    //       break;
+    //     default:
+    //       std::cout << "Unknown";
+    //       break;
+    //     }
+    //   }
+    // }
+
+    // std::cout << raw_data.angular_vel_x << std::endl;
+    // std::cout << raw_data.angular_vel_y << std::endl;
+    // std::cout << raw_data.angular_vel_z << std::endl;
+
+    return raw_data;
   }
 
   void pub_msg() {
-    euler = get_data();
+    imu_raw_data = get_angle_data();
 
-    tf::Quaternion orientation =
-        tf::createQuaternionFromRPY(euler.roll, euler.pitch, euler.yaw);
+    tf::Quaternion orientation = tf::createQuaternionFromRPY(
+        imu_raw_data.roll, imu_raw_data.pitch, imu_raw_data.yaw);
 
     ros::Time now = ros::Time::now();
 
@@ -105,9 +179,9 @@ public:
     m_imu_msg.orientation.w = orientation[3];
 
     std::cout << "x = " << m_imu_msg.orientation.x << std::endl;
-    std::cout << "roll = " << euler.roll << std::endl;
-    std::cout << "pitch = " << euler.pitch << std::endl;
-    std::cout << "yaw = " << euler.yaw << std::endl;
+    std::cout << "roll = " << imu_raw_data.roll << std::endl;
+    std::cout << "pitch = " << imu_raw_data.pitch << std::endl;
+    std::cout << "yaw = " << imu_raw_data.yaw << std::endl;
     std::cout << std::endl;
 
     m_imu_publisher.publish(m_imu_msg);
@@ -120,9 +194,13 @@ int main(int argc, char **argv) {
   MW_AHRS ahrs_obj;
   ros::Rate rate(100);
 
+  ahrs_obj.reset_imu();
+  ahrs_obj.speed_setup();
+  ahrs_obj.start_data_stream();
+
   while (ros::ok()) {
 
-    ahrs_obj.pub_msg();
+    ahrs_obj.get_angle_data();
 
     rate.sleep();
   }
