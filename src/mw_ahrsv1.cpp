@@ -28,12 +28,11 @@ private:
   // Device Name
   int dev = 0;
 
-  IMUMsg imu_raw_data;
-
   // Data buffer
   char buffer[120];
   char small_buffer[10];
 
+  // utils for serial cmd
   unsigned char angle_cmd[5] = {0x61, 0x6E, 0x67, 0x0D, 0x0A}; // ang Enter
   unsigned char gyr_cmd[5] = {0x67, 0x79, 0x72, 0x0D, 0x0A};   // ang Enter
   unsigned char acc_cmd[5] = {0x61, 0x63, 0x63, 0x0D, 0x0A};   // ang Enter
@@ -45,6 +44,9 @@ private:
   unsigned char ros_data_cmd[6] = {0x73, 0x73, 0x3D,
                                    0x37, 0x0D, 0x0A}; // ss=7 Enter
 
+  // hold raw data
+  IMUMsg imu_raw_data;
+
   // Serperate Euler Angle Variable
   int ang_count = 0;
 
@@ -55,11 +57,17 @@ private:
   const unsigned char CR = 0x0D;
   const unsigned char LF = 0x0A;
 
+  // ROS Parts
+
+  // whether pub tf or not
+  bool publish_tf = true;
+
   ros::NodeHandle m_nh;
   ros::Publisher m_imu_publisher;
   ros::Subscriber m_sub;
 
   sensor_msgs::Imu m_imu_msg;
+  tf::TransformBroadcaster broadcaster_;
 
 public:
   MW_AHRS() {
@@ -207,22 +215,36 @@ public:
     m_imu_msg.orientation.w = orientation[3];
 
     // original data used the g unit, convert to m/s^2
-    m_imu_msg.linear_acceleration.x = imu.ax * convertor_g2a;
-    m_imu_msg.linear_acceleration.y = -imu.ay * convertor_g2a;
-    m_imu_msg.linear_acceleration.z = -imu.az * convertor_g2a;
+    m_imu_msg.linear_acceleration.x = imu_raw_data.linear_acc_x * convertor_g2a;
+    m_imu_msg.linear_acceleration.y = imu_raw_data.linear_acc_y * convertor_g2a;
+    m_imu_msg.linear_acceleration.z = imu_raw_data.linear_acc_z * convertor_g2a;
 
     // original data used the degree/s unit, convert to radian/s
-    m_imu_msg.angular_velocity.x = imu.gx * convertor_d2r;
-    m_imu_msg.angular_velocity.y = -imu.gy * convertor_d2r;
-    m_imu_msg.angular_velocity.z = -imu.gz * convertor_d2r;
+    m_imu_msg.angular_velocity.x = imu_raw_data.angular_vel_x * convertor_d2r;
+    m_imu_msg.angular_velocity.y = imu_raw_data.angular_vel_y * convertor_d2r;
+    m_imu_msg.angular_velocity.z = imu_raw_data.angular_vel_z * convertor_d2r;
 
-    std::cout << "x = " << m_imu_msg.orientation.x << std::endl;
-    std::cout << "roll = " << imu_raw_data.roll << std::endl;
-    std::cout << "pitch = " << imu_raw_data.pitch << std::endl;
-    std::cout << "yaw = " << imu_raw_data.yaw << std::endl;
-    std::cout << std::endl;
+    m_imu_msg.linear_acceleration_covariance[0] =
+        m_imu_msg.linear_acceleration_covariance[4] =
+            m_imu_msg.linear_acceleration_covariance[8] = 1000;
+
+    m_imu_msg.angular_velocity_covariance[0] =
+        m_imu_msg.angular_velocity_covariance[4] =
+            m_imu_msg.angular_velocity_covariance[8] = 1;
+
+    m_imu_msg.orientation_covariance[0] = m_imu_msg.orientation_covariance[4] =
+        m_imu_msg.orientation_covariance[8] = 0;
 
     m_imu_publisher.publish(m_imu_msg);
+
+    if (publish_tf) {
+      broadcaster_.sendTransform(tf::StampedTransform(
+          tf::Transform(tf::createQuaternionFromRPY(imu_raw_data.roll,
+                                                    imu_raw_data.pitch,
+                                                    imu_raw_data.yaw),
+                        tf::Vector3(0.0, 0.0, 0.0)),
+          ros::Time::now(), "imu_link", "base_link"));
+    }
   }
 };
 
