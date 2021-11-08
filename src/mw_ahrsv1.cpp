@@ -39,8 +39,8 @@ private:
   unsigned char reset_cmd[5] = {0x7A, 0x72, 0x6F, 0x0D, 0x0A}; // zro Enter
   unsigned char av_cmd[7] = {0x61, 0x76, 0x3D, 0x31,
                              0x30, 0x0D, 0x0A}; // av = 10
-  unsigned char speed_cmd[7] = {0x73, 0x70, 0x3D, 0x31,
-                                0x30, 0x0D, 0x0A}; // sp=10 Enter
+  unsigned char speed_cmd[8] = {0x73, 0x70, 0x3D, 0x31,
+                                0x30, 0x30, 0x0D, 0x0A}; // sp=100 Enter
   unsigned char ros_data_cmd[6] = {0x73, 0x73, 0x3D,
                                    0x37, 0x0D, 0x0A}; // ss=7 Enter
 
@@ -56,6 +56,15 @@ private:
   const unsigned char G = 0x67;
   const unsigned char CR = 0x0D;
   const unsigned char LF = 0x0A;
+
+  // Unit converting constants
+  double convertor_g2a = 9.80665; // for linear_acceleration (g to m/s^2)
+  double convertor_d2r =
+      M_PI / 180.0; // for angular_velocity (degree to radian)
+  double convertor_r2d =
+      180.0 / M_PI;                // for easy understanding (radian to degree)
+  double convertor_ut2t = 1000000; // for magnetic_field (uT to Tesla)
+  double convertor_c = 1.0;        // for temperature (celsius)
 
   // ROS Parts
 
@@ -97,7 +106,7 @@ public:
   }
 
   void speed_setup() {
-    write(dev, speed_cmd, 7);
+    write(dev, speed_cmd, 8);
     read(dev, &buffer, sizeof(buffer));
 
     buffer[sizeof(buffer)] = '\0';
@@ -167,11 +176,11 @@ public:
         } else if (ang_count == 6) {
           msg_in.angular_vel_z = atof(token);
         } else if (ang_count == 7) {
-          msg_in.roll = atof(token);
+          msg_in.roll = atof(token) * -convertor_d2r;
         } else if (ang_count == 8) {
-          msg_in.pitch = atof(token);
+          msg_in.pitch = atof(token) * -convertor_d2r;
         } else if (ang_count == 9) {
-          msg_in.yaw = atof(token);
+          msg_in.yaw = atof(token) * -convertor_d2r;
         }
         ptr = rest;
       }
@@ -188,19 +197,18 @@ public:
 
   void pub_msg() {
 
-    static double convertor_g2a =
-        9.80665; // for linear_acceleration (g to m/s^2)
-    static double convertor_d2r =
-        M_PI / 180.0; // for angular_velocity (degree to radian)
-    static double convertor_r2d =
-        180.0 / M_PI; // for easy understanding (radian to degree)
-    static double convertor_ut2t = 1000000; // for magnetic_field (uT to Tesla)
-    static double convertor_c = 1.0;        // for temperature (celsius)
-
     parse_ss_data(imu_raw_data);
 
     tf::Quaternion orientation = tf::createQuaternionFromRPY(
         imu_raw_data.roll, imu_raw_data.pitch, imu_raw_data.yaw);
+
+    tf::Quaternion yaw_rotate(0, 0, -0.8939967, -0.4480736);
+    tf::Quaternion new_orientation = orientation * yaw_rotate;
+    auto new_rpy = new_orientation.getAxis();
+
+    // std::cout << new_rpy.getX() << std::endl;
+    // std::cout << new_rpy.getY() << std::endl;
+    // std::cout << new_rpy.getZ() << std::endl;
 
     ros::Time now = ros::Time::now();
 
@@ -209,10 +217,10 @@ public:
     m_imu_msg.header.frame_id = "imu_link";
 
     // orientation
-    m_imu_msg.orientation.x = orientation[0];
-    m_imu_msg.orientation.y = orientation[1];
-    m_imu_msg.orientation.z = orientation[2];
-    m_imu_msg.orientation.w = orientation[3];
+    m_imu_msg.orientation.x = new_orientation[0];
+    m_imu_msg.orientation.y = new_orientation[1];
+    m_imu_msg.orientation.z = new_orientation[2];
+    m_imu_msg.orientation.w = new_orientation[3];
 
     // original data used the g unit, convert to m/s^2
     m_imu_msg.linear_acceleration.x = imu_raw_data.linear_acc_x * convertor_g2a;
@@ -239,9 +247,9 @@ public:
 
     if (publish_tf) {
       broadcaster_.sendTransform(tf::StampedTransform(
-          tf::Transform(tf::createQuaternionFromRPY(imu_raw_data.roll,
-                                                    imu_raw_data.pitch,
-                                                    imu_raw_data.yaw),
+          tf::Transform(tf::createQuaternionFromRPY(new_orientation.getX(),
+                                                    new_orientation.getY(),
+                                                    new_orientation.getZ()),
                         tf::Vector3(0.0, 0.0, 0.0)),
           ros::Time::now(), "imu_link", "base_link"));
     }
@@ -252,7 +260,7 @@ int main(int argc, char **argv) {
   ros::init(argc, argv, "mw_ahrsv1");
 
   MW_AHRS ahrs_obj;
-  ros::Rate rate(100);
+  ros::Rate rate(10);
 
   ahrs_obj.reset_imu();
   ahrs_obj.speed_setup();
