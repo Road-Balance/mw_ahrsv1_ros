@@ -205,16 +205,21 @@ public:
     tf::Quaternion yaw_rotate;
     yaw_rotate.setRPY(0, 0, 90 * convertor_d2r);
 
-    tf::Quaternion new_orientation = orientation * yaw_rotate;
+    tf::Quaternion q;
+    q.setRPY(0, 0, -90 * convertor_d2r);
+
+    // tf::Quaternion new_orientation = orientation;
+    // tf::Quaternion new_orientation = q * orientation;
+
+    tf::Quaternion new_orientation = q * orientation * yaw_rotate;
+
     // tf::Quaternion new_orientation = orientation;
 
     // tf::Quaternion yaw_rotate(0, 0, -0.7071068, 0.7071068);
     // tf::Quaternion yaw_rotate(0, 0, -1, 0);
 
     ros::Time now = ros::Time::now();
-
     m_imu_msg.header.stamp = now;
-
     m_imu_msg.header.frame_id = "imu_link";
 
     // orientation
@@ -224,8 +229,9 @@ public:
     m_imu_msg.orientation.w = new_orientation[3];
 
     // original data used the g unit, convert to m/s^2
-    m_imu_msg.linear_acceleration.x = imu_raw_data.linear_acc_x * convertor_g2a;
-    m_imu_msg.linear_acceleration.y = imu_raw_data.linear_acc_y * convertor_g2a;
+    m_imu_msg.linear_acceleration.x =
+        -imu_raw_data.linear_acc_y * convertor_g2a;
+    m_imu_msg.linear_acceleration.y = imu_raw_data.linear_acc_x * convertor_g2a;
     m_imu_msg.linear_acceleration.z = imu_raw_data.linear_acc_z * convertor_g2a;
 
     // original data used the degree/s unit, convert to radian/s
@@ -233,27 +239,27 @@ public:
     m_imu_msg.angular_velocity.y = imu_raw_data.angular_vel_y * convertor_d2r;
     m_imu_msg.angular_velocity.z = imu_raw_data.angular_vel_z * convertor_d2r;
 
-    m_imu_msg.linear_acceleration_covariance[0] =
-        m_imu_msg.linear_acceleration_covariance[4] =
-            m_imu_msg.linear_acceleration_covariance[8] = 1000;
+    // m_imu_msg.linear_acceleration_covariance[0] =
+    //     m_imu_msg.linear_acceleration_covariance[4] =
+    //         m_imu_msg.linear_acceleration_covariance[8] = 1000;
 
-    m_imu_msg.angular_velocity_covariance[0] =
-        m_imu_msg.angular_velocity_covariance[4] =
-            m_imu_msg.angular_velocity_covariance[8] = 1;
+    // m_imu_msg.angular_velocity_covariance[0] =
+    //     m_imu_msg.angular_velocity_covariance[4] =
+    //         m_imu_msg.angular_velocity_covariance[8] = 1;
 
-    m_imu_msg.orientation_covariance[0] = m_imu_msg.orientation_covariance[4] =
-        m_imu_msg.orientation_covariance[8] = 0;
+    // m_imu_msg.orientation_covariance[0] = m_imu_msg.orientation_covariance[4]
+    // =
+    //     m_imu_msg.orientation_covariance[8] = 0;
 
     m_imu_publisher.publish(m_imu_msg);
 
     if (publish_tf) {
 
       tf::Transform transform;
-      tf::Quaternion q;
+      // new_orientation = q * new_orientation;
 
       transform.setOrigin(tf::Vector3(0.0, 0.0, 0.0));
-      q.setRPY(0, 0, -90 * convertor_d2r);
-      transform.setRotation(q * new_orientation);
+      transform.setRotation(new_orientation);
       broadcaster_.sendTransform(tf::StampedTransform(
           transform, ros::Time::now(), "imu_link", "base_link"));
 
