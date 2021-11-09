@@ -202,10 +202,14 @@ public:
     tf::Quaternion orientation = tf::createQuaternionFromRPY(
         imu_raw_data.roll, imu_raw_data.pitch, imu_raw_data.yaw);
 
+    tf::Quaternion yaw_rotate;
+    yaw_rotate.setRPY(0, 0, 90 * convertor_d2r);
+
+    tf::Quaternion new_orientation = orientation * yaw_rotate;
+    // tf::Quaternion new_orientation = orientation;
+
     // tf::Quaternion yaw_rotate(0, 0, -0.7071068, 0.7071068);
     // tf::Quaternion yaw_rotate(0, 0, -1, 0);
-
-    // tf::Quaternion new_orientation = orientation * yaw_rotate;
 
     ros::Time now = ros::Time::now();
 
@@ -214,10 +218,10 @@ public:
     m_imu_msg.header.frame_id = "imu_link";
 
     // orientation
-    m_imu_msg.orientation.x = orientation[0];
-    m_imu_msg.orientation.y = orientation[1];
-    m_imu_msg.orientation.z = orientation[2];
-    m_imu_msg.orientation.w = orientation[3];
+    m_imu_msg.orientation.x = new_orientation[0];
+    m_imu_msg.orientation.y = new_orientation[1];
+    m_imu_msg.orientation.z = new_orientation[2];
+    m_imu_msg.orientation.w = new_orientation[3];
 
     // original data used the g unit, convert to m/s^2
     m_imu_msg.linear_acceleration.x = imu_raw_data.linear_acc_x * convertor_g2a;
@@ -243,9 +247,19 @@ public:
     m_imu_publisher.publish(m_imu_msg);
 
     if (publish_tf) {
+
+      tf::Transform transform;
+      tf::Quaternion q;
+
+      transform.setOrigin(tf::Vector3(0.0, 0.0, 0.0));
+      q.setRPY(0, 0, -90 * convertor_d2r);
+      transform.setRotation(q * new_orientation);
       broadcaster_.sendTransform(tf::StampedTransform(
-          tf::Transform(orientation, tf::Vector3(0.0, 0.0, 0.0)),
-          ros::Time::now(), "imu_link", "base_link"));
+          transform, ros::Time::now(), "imu_link", "base_link"));
+
+      // broadcaster_.sendTransform(tf::StampedTransform(
+      //     tf::Transform(orientation, tf::Vector3(0.0, 0.0, 0.0)),
+      //     ros::Time::now(), "imu_link", "base_link"));
     }
   }
 };
